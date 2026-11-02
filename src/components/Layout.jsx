@@ -1,0 +1,45 @@
+import { NavLink, Outlet } from 'react-router-dom'
+import { useAuth } from '../lib/auth'
+
+const link = ({ isActive }) => (isActive ? 'active' : '')
+
+export default function Layout() {
+  const { user, signOut } = useAuth()
+  return (
+    <div className="app">
+      <aside className="sidebar">
+        <div className="brand">
+          {import.meta.env.VITE_APP_NAME || 'Phần mềm kế toán'}
+          <small>Thông tư 133/2016</small>
+        </div>
+        <nav className="nav">
+          <NavLink to="/" end className={link}>Tổng quan</NavLink>
+
+          <div className="group-label">Danh mục</div>
+          <NavLink to="/partners" className={link}>Đối tác</NavLink>
+          <NavLink to="/products" className={link}>Sản phẩm</NavLink>
+
+          <div className="group-label">Nghiệp vụ</div>
+          <NavLink to="/invoices-in" className={link}>Hóa đơn đầu vào</NavLink>
+          <NavLink to="/invoices-out" className={link}>Hóa đơn đầu ra</NavLink>
+          <NavLink to="/inventory" className={link}>Tồn kho</NavLink>
+          <NavLink to="/bank" className={link}>Tài khoản ngân hàng</NavLink>
+          <NavLink to="/expenses" className={link}>Chi phí</NavLink>
+          <NavLink to="/shopee" className={link}>Đối soát Shopee</NavLink>
+          <NavLink to="/aka" className={link}>Đối soát AKA Media</NavLink>
+
+          <div className="group-label">Báo cáo</div>
+          <NavLink to="/profit" className={link}>Kết quả kinh doanh</NavLink>
+          <NavLink to="/vat" className={link}>Thuế VAT</NavLink>
+        </nav>
+        <div className="footer">
+          <div>{user?.email}</div>
+          <button onClick={signOut}>Đăng xuất</button>
+        </div>
+      </aside>
+      <main className="content">
+        <Outlet />
+      </main>
+    </div>
+  )
+}

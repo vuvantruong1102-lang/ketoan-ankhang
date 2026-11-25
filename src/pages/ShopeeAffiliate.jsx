@@ -103,6 +103,21 @@ export default function ShopeeAffiliate() {
     if (error) { setErr(error.message); return }
     setRecs((rs) => rs.map((x) => (x.id === r.id ? { ...x, paid_date: val } : x)))
   }
+  // Shopee TT cả VAT (nhập tay, lưu ngay). Lưu trong recs dưới dạng chuỗi nháp
+  // để gõ mượt; chỉ ghi DB khi rời ô (onBlur).
+  function editVat(r, raw) {
+    setRecs((rs) => rs.map((x) => (x.id === r.id ? { ...x, _vatDraft: raw } : x)))
+  }
+  async function saveVat(r) {
+    const raw = r._vatDraft
+    if (raw === undefined) return
+    const val = raw === '' ? null : Number(raw)
+    const { error } = await supabase.from('shopee_reconcile')
+      .update({ shopee_amount_vat: val }).eq('id', r.id)
+    if (error) { setErr(error.message); return }
+    setRecs((rs) => rs.map((x) => (x.id === r.id
+      ? { ...x, shopee_amount_vat: val, _vatDraft: undefined } : x)))
+  }
 
   const loading = rows === null || recs === null
 
@@ -227,35 +242,49 @@ export default function ShopeeAffiliate() {
               + Lưu đối soát
             </button>
 
-            <table className="grid" style={{ marginTop: 14 }}>
+            <table className="grid shopee-rec" style={{ marginTop: 14 }}>
               <thead>
                 <tr>
-                  <th>Ngày ĐS</th><th>Khoảng</th>
+                  <th style={{ width: 90 }}>Ngày ĐS</th>
+                  <th style={{ width: 160, whiteSpace: 'nowrap' }}>Khoảng</th>
                   <th className="num">Hoa hồng</th>
                   <th className="num">Shopee TT</th>
                   <th className="num">Chênh</th>
-                  <th style={{ width: 130 }}>Trạng thái</th>
-                  <th style={{ width: 140 }}>Ngày thanh toán</th>
+                  <th className="num" style={{ width: 150 }}>Shopee TT cả VAT</th>
+                  <th style={{ width: 120 }}>Trạng thái</th>
+                  <th style={{ width: 120 }}>Ngày thanh toán</th>
                   <th style={{ width: 28 }}></th>
                 </tr>
               </thead>
               <tbody>
                 {recs.length === 0 ? (
-                  <tr><td colSpan={8}><Empty>Chưa có đối soát.</Empty></td></tr>
+                  <tr><td colSpan={9}><Empty>Chưa có đối soát.</Empty></td></tr>
                 ) : recs.map((r) => {
                   const my = sumInRange(r.period_from, r.period_to)
                   const diff = my - Number(r.shopee_amount)
                   const paid = r.status === 'paid'
+                  const vatVal = r._vatDraft !== undefined
+                    ? r._vatDraft
+                    : (r.shopee_amount_vat ?? '')
                   return (
                     <tr key={r.id}>
-                      <td>{dmy(r.reconcile_date)}</td>
-                      <td style={{ fontSize: 12 }}>{dmy(r.period_from)}<br />→ {dmy(r.period_to)}</td>
-                      <td className="num">{vnd(my)}</td>
-                      <td className="num">{vnd(r.shopee_amount)}</td>
-                      <td className="num">
+                      <td style={{ whiteSpace: 'nowrap' }}>{dmy(r.reconcile_date)}</td>
+                      <td style={{ whiteSpace: 'nowrap' }}>
+                        {dmy(r.period_from)} → {dmy(r.period_to)}
+                      </td>
+                      <td className="num" style={{ whiteSpace: 'nowrap' }}>{vnd(my)}</td>
+                      <td className="num" style={{ whiteSpace: 'nowrap' }}>{vnd(r.shopee_amount)}</td>
+                      <td className="num" style={{ whiteSpace: 'nowrap' }}>
                         <span className={diff === 0 ? 'pos' : 'neg'}>
                           {diff > 0 ? '+' : ''}{vnd(diff)}
                         </span>
+                      </td>
+                      <td>
+                        <input type="number" step="any" value={vatVal}
+                          placeholder="Nhập…"
+                          style={{ textAlign: 'right' }}
+                          onChange={(e) => editVat(r, e.target.value)}
+                          onBlur={() => saveVat(r)} />
                       </td>
                       <td>
                         <select value={r.status || 'unpaid'}

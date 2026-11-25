@@ -356,6 +356,10 @@ input[type="checkbox"] { width: auto; }
   .shopee-cols2 { grid-template-columns: 1fr; }
 }
 
+/* Bảng đối soát Shopee: ô gọn, input lấp đầy ô, canh giữa dọc */
+.shopee-rec th, .shopee-rec td { padding: 6px 8px; vertical-align: middle; }
+.shopee-rec input, .shopee-rec select { width: 100%; box-sizing: border-box; }
+
 /* ---------- Tài khoản ngân hàng ---------- */
 .bank-layout {
   display: grid;

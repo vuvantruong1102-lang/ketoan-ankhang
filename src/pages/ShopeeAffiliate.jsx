@@ -14,10 +14,13 @@ export default function ShopeeAffiliate() {
 
   // form hoa hồng hàng ngày
   const [f1, setF1] = useState({ tx_date: today(), amount: '', payment_code: '' })
-  // form đối soát
-  const [f3, setF3] = useState({
-    reconcile_date: today(), period_from: '', period_to: '', shopee_amount: '',
-  })
+  // form đối soát (editingId != null => đang sửa dòng đó)
+  const blankF3 = {
+    reconcile_date: today(), period_from: '', period_to: '',
+    shopee_amount: '', shopee_amount_vat: '',
+  }
+  const [f3, setF3] = useState(blankF3)
+  const [editingId, setEditingId] = useState(null)
 
   async function load() {
     setErr('')
@@ -66,26 +69,51 @@ export default function ShopeeAffiliate() {
   const f3MyTotal = sumInRange(f3.period_from, f3.period_to)
   const f3Diff = f3MyTotal - Number(f3.shopee_amount || 0)
 
-  // ---- Đối soát ----
-  async function addReconcile() {
+  // ---- Đối soát: lưu (thêm mới hoặc cập nhật nếu đang sửa) ----
+  async function saveReconcile() {
     setErr('')
     if (!f3.period_from || !f3.period_to) { setErr('Chọn khoảng thời gian đối soát.'); return }
     if (f3.period_to < f3.period_from) { setErr('“Đến ngày” phải sau “Từ ngày”.'); return }
     if (f3.shopee_amount === '') { setErr('Nhập số tiền Shopee đối soát.'); return }
-    const { error } = await supabase.from('shopee_reconcile').insert({
+    const payload = {
       reconcile_date: f3.reconcile_date,
       period_from: f3.period_from,
       period_to: f3.period_to,
       shopee_amount: Number(f3.shopee_amount),
-      status: 'unpaid',
-    })
+      shopee_amount_vat: f3.shopee_amount_vat === '' ? null : Number(f3.shopee_amount_vat),
+    }
+    let error
+    if (editingId) {
+      ({ error } = await supabase.from('shopee_reconcile').update(payload).eq('id', editingId))
+    } else {
+      ({ error } = await supabase.from('shopee_reconcile').insert({ ...payload, status: 'unpaid' }))
+    }
     if (error) { setErr(error.message); return }
-    setF3({ reconcile_date: today(), period_from: '', period_to: '', shopee_amount: '' })
+    setF3(blankF3)
+    setEditingId(null)
     load()
+  }
+  // bắt đầu sửa một dòng: nạp dữ liệu lên form
+  function startEdit(r) {
+    setEditingId(r.id)
+    setF3({
+      reconcile_date: r.reconcile_date,
+      period_from: r.period_from,
+      period_to: r.period_to,
+      shopee_amount: r.shopee_amount ?? '',
+      shopee_amount_vat: r.shopee_amount_vat ?? '',
+    })
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
+  function cancelEdit() {
+    setEditingId(null)
+    setF3(blankF3)
+    setErr('')
   }
   async function delReconcile(r) {
     if (!confirm('Xóa dòng đối soát này?')) return
     await supabase.from('shopee_reconcile').delete().eq('id', r.id)
+    if (editingId === r.id) cancelEdit()
     load()
   }
   // đổi trạng thái thanh toán (lưu ngay)
@@ -102,21 +130,6 @@ export default function ShopeeAffiliate() {
       .update({ paid_date: val }).eq('id', r.id)
     if (error) { setErr(error.message); return }
     setRecs((rs) => rs.map((x) => (x.id === r.id ? { ...x, paid_date: val } : x)))
-  }
-  // Shopee TT cả VAT (nhập tay, lưu ngay). Lưu trong recs dưới dạng chuỗi nháp
-  // để gõ mượt; chỉ ghi DB khi rời ô (onBlur).
-  function editVat(r, raw) {
-    setRecs((rs) => rs.map((x) => (x.id === r.id ? { ...x, _vatDraft: raw } : x)))
-  }
-  async function saveVat(r) {
-    const raw = r._vatDraft
-    if (raw === undefined) return
-    const val = raw === '' ? null : Number(raw)
-    const { error } = await supabase.from('shopee_reconcile')
-      .update({ shopee_amount_vat: val }).eq('id', r.id)
-    if (error) { setErr(error.message); return }
-    setRecs((rs) => rs.map((x) => (x.id === r.id
-      ? { ...x, shopee_amount_vat: val, _vatDraft: undefined } : x)))
   }
 
   const loading = rows === null || recs === null
@@ -224,6 +237,12 @@ export default function ShopeeAffiliate() {
                   onChange={(e) => setF3({ ...f3, period_to: e.target.value })} />
               </div>
             </div>
+            <div className="field">
+              <label>Shopee TT cả VAT</label>
+              <input type="number" step="any" value={f3.shopee_amount_vat}
+                placeholder="Số tiền Shopee thanh toán gồm VAT"
+                onChange={(e) => setF3({ ...f3, shopee_amount_vat: e.target.value })} />
+            </div>
 
             {/* xem trước chênh lệch trước khi lưu */}
             {f3.period_from && f3.period_to && (
@@ -238,9 +257,14 @@ export default function ShopeeAffiliate() {
               </div>
             )}
 
-            <button className="btn accent sm" style={{ width: '100%' }} onClick={addReconcile}>
-              + Lưu đối soát
-            </button>
+            <div className="btn-row">
+              <button className="btn accent sm" style={{ flex: 1 }} onClick={saveReconcile}>
+                {editingId ? 'Lưu thay đổi' : '+ Lưu đối soát'}
+              </button>
+              {editingId && (
+                <button className="btn sm" onClick={cancelEdit}>Hủy</button>
+              )}
+            </div>
 
             <table className="grid shopee-rec" style={{ marginTop: 14 }}>
               <thead>
@@ -253,7 +277,7 @@ export default function ShopeeAffiliate() {
                   <th className="num" style={{ width: 150 }}>Shopee TT cả VAT</th>
                   <th style={{ width: 120 }}>Trạng thái</th>
                   <th style={{ width: 120 }}>Ngày thanh toán</th>
-                  <th style={{ width: 28 }}></th>
+                  <th style={{ width: 56 }}></th>
                 </tr>
               </thead>
               <tbody>
@@ -263,11 +287,9 @@ export default function ShopeeAffiliate() {
                   const my = sumInRange(r.period_from, r.period_to)
                   const diff = my - Number(r.shopee_amount)
                   const paid = r.status === 'paid'
-                  const vatVal = r._vatDraft !== undefined
-                    ? r._vatDraft
-                    : (r.shopee_amount_vat ?? '')
+                  const editing = editingId === r.id
                   return (
-                    <tr key={r.id}>
+                    <tr key={r.id} style={editing ? { background: 'var(--accent-soft)' } : undefined}>
                       <td style={{ whiteSpace: 'nowrap' }}>{dmy(r.reconcile_date)}</td>
                       <td style={{ whiteSpace: 'nowrap' }}>
                         {dmy(r.period_from)} → {dmy(r.period_to)}
@@ -279,12 +301,10 @@ export default function ShopeeAffiliate() {
                           {diff > 0 ? '+' : ''}{vnd(diff)}
                         </span>
                       </td>
-                      <td>
-                        <input type="number" step="any" value={vatVal}
-                          placeholder="Nhập…"
-                          style={{ textAlign: 'right' }}
-                          onChange={(e) => editVat(r, e.target.value)}
-                          onBlur={() => saveVat(r)} />
+                      <td className="num" style={{ whiteSpace: 'nowrap' }}>
+                        {r.shopee_amount_vat == null
+                          ? <span className="muted">—</span>
+                          : vnd(r.shopee_amount_vat)}
                       </td>
                       <td>
                         <select value={r.status || 'unpaid'}
@@ -301,7 +321,10 @@ export default function ShopeeAffiliate() {
                         <input type="date" value={r.paid_date || ''}
                           onChange={(e) => setPaidDate(r, e.target.value)} />
                       </td>
-                      <td><button className="icon-btn del" onClick={() => delReconcile(r)}>✕</button></td>
+                      <td style={{ whiteSpace: 'nowrap' }}>
+                        <button className="icon-btn" title="Sửa" onClick={() => startEdit(r)}>✎</button>
+                        <button className="icon-btn del" title="Xóa" onClick={() => delReconcile(r)}>✕</button>
+                      </td>
                     </tr>
                   )
                 })}

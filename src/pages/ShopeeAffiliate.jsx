@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { Panel, Alert, Empty, Loading } from '../components/ui'
 import { vnd, dmy } from '../lib/format'
@@ -6,16 +6,15 @@ import { vnd, dmy } from '../lib/format'
 const today = () => new Date().toISOString().slice(0, 10)
 
 export default function ShopeeAffiliate() {
-  const [rows, setRows] = useState(null)        // bảng 1: hoa hồng hàng ngày
-  const [recs, setRecs] = useState(null)        // bảng 3: đối soát
+  const [rows, setRows] = useState(null)        // hoa hồng hàng ngày
+  const [recs, setRecs] = useState(null)        // đối soát
   const [err, setErr] = useState('')
-  const [expanded, setExpanded] = useState(null) // mã thanh toán đang mở chi tiết
-  // tìm tổng hoa hồng theo khoảng ngày (panel 2)
+  // tìm tổng hoa hồng theo khoảng ngày
   const [searchRange, setSearchRange] = useState({ from: '', to: '' })
 
-  // form bảng 1
+  // form hoa hồng hàng ngày
   const [f1, setF1] = useState({ tx_date: today(), amount: '', payment_code: '' })
-  // form bảng 3
+  // form đối soát
   const [f3, setF3] = useState({
     reconcile_date: today(), period_from: '', period_to: '', shopee_amount: '',
   })
@@ -34,7 +33,7 @@ export default function ShopeeAffiliate() {
   }
   useEffect(() => { load() }, [])
 
-  // ---- Bảng 1: thêm hoa hồng ngày ----
+  // ---- Hoa hồng hàng ngày ----
   async function addDaily() {
     setErr('')
     if (!f1.tx_date || !(Number(f1.amount) >= 0) || f1.amount === '') {
@@ -46,7 +45,7 @@ export default function ShopeeAffiliate() {
       payment_code: f1.payment_code.trim() || null,
     })
     if (error) { setErr(error.message); return }
-    setF1({ tx_date: f1.tx_date, amount: '', payment_code: f1.payment_code }) // giữ ngày + mã cho nhập liên tục
+    setF1({ tx_date: f1.tx_date, amount: '', payment_code: f1.payment_code })
     load()
   }
   async function delDaily(r) {
@@ -55,40 +54,19 @@ export default function ShopeeAffiliate() {
     load()
   }
 
-  // ---- Bảng 2: gom theo mã thanh toán ----
-  const grouped = useMemo(() => {
-    const map = new Map()
-    for (const r of rows || []) {
-      const key = r.payment_code || '(chưa có mã)'
-      if (!map.has(key)) map.set(key, { code: key, total: 0, items: [] })
-      const g = map.get(key)
-      g.total += Number(r.amount)
-      g.items.push(r)
-    }
-    // sắp theo ngày sớm nhất của mã
-    return Array.from(map.values()).sort((a, b) => {
-      const da = Math.min(...a.items.map((x) => +new Date(x.tx_date)))
-      const db = Math.min(...b.items.map((x) => +new Date(x.tx_date)))
-      return db - da
-    })
-  }, [rows])
-
   // tổng hoa hồng từ đầu đến nay
-  const grandTotal = useMemo(
-    () => (rows || []).reduce((s, r) => s + Number(r.amount), 0), [rows])
+  const grandTotal = (rows || []).reduce((s, r) => s + Number(r.amount), 0)
 
-  // ---- Bảng 3: đối soát ----
   function sumInRange(from, to) {
     if (!from || !to) return 0
     return (rows || []).reduce((s, r) =>
       (r.tx_date >= from && r.tx_date <= to) ? s + Number(r.amount) : s, 0)
   }
-  // tổng hoa hồng theo khoảng tìm kiếm ở panel 2
   const searchTotal = sumInRange(searchRange.from, searchRange.to)
-  // tổng tự nhập theo khoảng đang nhập ở form (xem trước)
   const f3MyTotal = sumInRange(f3.period_from, f3.period_to)
   const f3Diff = f3MyTotal - Number(f3.shopee_amount || 0)
 
+  // ---- Đối soát ----
   async function addReconcile() {
     setErr('')
     if (!f3.period_from || !f3.period_to) { setErr('Chọn khoảng thời gian đối soát.'); return }
@@ -99,6 +77,7 @@ export default function ShopeeAffiliate() {
       period_from: f3.period_from,
       period_to: f3.period_to,
       shopee_amount: Number(f3.shopee_amount),
+      status: 'unpaid',
     })
     if (error) { setErr(error.message); return }
     setF3({ reconcile_date: today(), period_from: '', period_to: '', shopee_amount: '' })
@@ -108,6 +87,21 @@ export default function ShopeeAffiliate() {
     if (!confirm('Xóa dòng đối soát này?')) return
     await supabase.from('shopee_reconcile').delete().eq('id', r.id)
     load()
+  }
+  // đổi trạng thái thanh toán (lưu ngay)
+  async function setStatus(r, status) {
+    const { error } = await supabase.from('shopee_reconcile')
+      .update({ status }).eq('id', r.id)
+    if (error) { setErr(error.message); return }
+    setRecs((rs) => rs.map((x) => (x.id === r.id ? { ...x, status } : x)))
+  }
+  // đổi ngày thanh toán (lưu ngay)
+  async function setPaidDate(r, paid_date) {
+    const val = paid_date || null
+    const { error } = await supabase.from('shopee_reconcile')
+      .update({ paid_date: val }).eq('id', r.id)
+    if (error) { setErr(error.message); return }
+    setRecs((rs) => rs.map((x) => (x.id === r.id ? { ...x, paid_date: val } : x)))
   }
 
   const loading = rows === null || recs === null
@@ -124,9 +118,14 @@ export default function ShopeeAffiliate() {
       <Alert>{err}</Alert>
 
       {loading ? <Loading /> : (
-        <div className="shopee-cols">
-          {/* ---------- BẢNG 1 ---------- */}
+        <div className="shopee-cols2">
+          {/* ---------- HOA HỒNG HÀNG NGÀY ---------- */}
           <Panel title="1 · Hoa hồng hàng ngày">
+            {/* tổng hoa hồng từ đầu đến nay — ngay dưới tiêu đề */}
+            <div className="alert" style={{ background: 'var(--accent-soft)', color: 'var(--accent)' }}>
+              Tổng hoa hồng đã nhận (từ đầu): <b>{vnd(grandTotal)}</b>
+            </div>
+
             <div className="field">
               <label>Ngày</label>
               <input type="date" value={f1.tx_date}
@@ -146,7 +145,26 @@ export default function ShopeeAffiliate() {
               + Thêm ngày
             </button>
 
-            <table className="grid" style={{ marginTop: 14 }}>
+            {/* tìm tổng hoa hồng theo khoảng ngày */}
+            <div className="row c2" style={{ marginTop: 14, marginBottom: 8 }}>
+              <div className="field" style={{ marginBottom: 0 }}>
+                <label>Tìm từ ngày</label>
+                <input type="date" value={searchRange.from}
+                  onChange={(e) => setSearchRange({ ...searchRange, from: e.target.value })} />
+              </div>
+              <div className="field" style={{ marginBottom: 0 }}>
+                <label>Đến ngày</label>
+                <input type="date" value={searchRange.to}
+                  onChange={(e) => setSearchRange({ ...searchRange, to: e.target.value })} />
+              </div>
+            </div>
+            {searchRange.from && searchRange.to && (
+              <div className="alert" style={{ background: '#f7f9fb', color: 'var(--ink)', fontSize: 13 }}>
+                Tổng hoa hồng trong khoảng: <b>{vnd(searchTotal)}</b>
+              </div>
+            )}
+
+            <table className="grid" style={{ marginTop: 10 }}>
               <thead>
                 <tr><th>Ngày</th><th className="num">Số tiền</th><th>Mã</th><th style={{ width: 28 }}></th></tr>
               </thead>
@@ -165,72 +183,19 @@ export default function ShopeeAffiliate() {
             </table>
           </Panel>
 
-          {/* ---------- BẢNG 2 ---------- */}
-          <Panel title="2 · Gom theo mã thanh toán">
-            {/* tổng hoa hồng từ đầu đến nay */}
-            <div className="alert" style={{ background: 'var(--accent-soft)', color: 'var(--accent)' }}>
-              Tổng hoa hồng đã nhận (từ đầu): <b>{vnd(grandTotal)}</b>
-            </div>
-
-            {/* tìm tổng hoa hồng theo khoảng ngày */}
-            <div className="row c2" style={{ marginBottom: 8 }}>
-              <div className="field" style={{ marginBottom: 0 }}>
-                <label>Từ ngày</label>
-                <input type="date" value={searchRange.from}
-                  onChange={(e) => setSearchRange({ ...searchRange, from: e.target.value })} />
+          {/* ---------- ĐỐI SOÁT VỚI SHOPEE ---------- */}
+          <Panel title="2 · Đối soát với Shopee">
+            <div className="row c2">
+              <div className="field">
+                <label>Ngày đối soát</label>
+                <input type="date" value={f3.reconcile_date}
+                  onChange={(e) => setF3({ ...f3, reconcile_date: e.target.value })} />
               </div>
-              <div className="field" style={{ marginBottom: 0 }}>
-                <label>Đến ngày</label>
-                <input type="date" value={searchRange.to}
-                  onChange={(e) => setSearchRange({ ...searchRange, to: e.target.value })} />
+              <div className="field">
+                <label>Số tiền Shopee đối soát</label>
+                <input type="number" step="any" value={f3.shopee_amount}
+                  onChange={(e) => setF3({ ...f3, shopee_amount: e.target.value })} />
               </div>
-            </div>
-            {searchRange.from && searchRange.to && (
-              <div className="alert" style={{ background: '#f7f9fb', color: 'var(--ink)', fontSize: 13 }}>
-                Tổng hoa hồng trong khoảng: <b>{vnd(searchTotal)}</b>
-              </div>
-            )}
-
-            {grouped.length === 0 ? <Empty>Chưa có dữ liệu.</Empty> : (
-              <table className="grid">
-                <thead>
-                  <tr><th>Mã thanh toán</th><th className="num">Tổng hoa hồng</th></tr>
-                </thead>
-                <tbody>
-                  {grouped.map((g) => (
-                    <Fragment key={g.code}>
-                      <tr style={{ cursor: 'pointer' }}
-                        onClick={() => setExpanded(expanded === g.code ? null : g.code)}>
-                        <td style={{ fontWeight: 500 }}>
-                          <span style={{ display: 'inline-block', width: 14 }}>
-                            {expanded === g.code ? '▾' : '▸'}
-                          </span>
-                          {g.code}
-                          <span className="muted" style={{ fontSize: 12 }}> · {g.items.length} ngày</span>
-                        </td>
-                        <td className="num" style={{ fontWeight: 600 }}>{vnd(g.total)}</td>
-                      </tr>
-                      {expanded === g.code && g.items
-                        .slice().sort((a, b) => a.tx_date.localeCompare(b.tx_date))
-                        .map((it) => (
-                          <tr key={'d' + it.id} style={{ background: '#f9fbfc' }}>
-                            <td style={{ paddingLeft: 28 }} className="muted">{dmy(it.tx_date)}</td>
-                            <td className="num muted">{vnd(it.amount)}</td>
-                          </tr>
-                        ))}
-                    </Fragment>
-                  ))}
-                </tbody>
-              </table>
-            )}
-          </Panel>
-
-          {/* ---------- BẢNG 3 ---------- */}
-          <Panel title="3 · Đối soát với Shopee">
-            <div className="field">
-              <label>Ngày đối soát</label>
-              <input type="date" value={f3.reconcile_date}
-                onChange={(e) => setF3({ ...f3, reconcile_date: e.target.value })} />
             </div>
             <div className="row c2">
               <div className="field">
@@ -243,11 +208,6 @@ export default function ShopeeAffiliate() {
                 <input type="date" value={f3.period_to}
                   onChange={(e) => setF3({ ...f3, period_to: e.target.value })} />
               </div>
-            </div>
-            <div className="field">
-              <label>Số tiền Shopee đối soát</label>
-              <input type="number" step="any" value={f3.shopee_amount}
-                onChange={(e) => setF3({ ...f3, shopee_amount: e.target.value })} />
             </div>
 
             {/* xem trước chênh lệch trước khi lưu */}
@@ -274,15 +234,18 @@ export default function ShopeeAffiliate() {
                   <th className="num">Hoa hồng</th>
                   <th className="num">Shopee TT</th>
                   <th className="num">Chênh</th>
+                  <th style={{ width: 130 }}>Trạng thái</th>
+                  <th style={{ width: 140 }}>Ngày thanh toán</th>
                   <th style={{ width: 28 }}></th>
                 </tr>
               </thead>
               <tbody>
                 {recs.length === 0 ? (
-                  <tr><td colSpan={6}><Empty>Chưa có đối soát.</Empty></td></tr>
+                  <tr><td colSpan={8}><Empty>Chưa có đối soát.</Empty></td></tr>
                 ) : recs.map((r) => {
-                  const my = sumInRange(r.period_from, r.period_to)  // hoa hồng theo khoảng
+                  const my = sumInRange(r.period_from, r.period_to)
                   const diff = my - Number(r.shopee_amount)
+                  const paid = r.status === 'paid'
                   return (
                     <tr key={r.id}>
                       <td>{dmy(r.reconcile_date)}</td>
@@ -293,6 +256,21 @@ export default function ShopeeAffiliate() {
                         <span className={diff === 0 ? 'pos' : 'neg'}>
                           {diff > 0 ? '+' : ''}{vnd(diff)}
                         </span>
+                      </td>
+                      <td>
+                        <select value={r.status || 'unpaid'}
+                          onChange={(e) => setStatus(r, e.target.value)}
+                          style={{
+                            color: paid ? 'var(--accent)' : 'var(--danger, #c0392b)',
+                            fontWeight: 600,
+                          }}>
+                          <option value="unpaid">Chưa thanh toán</option>
+                          <option value="paid">Đã thanh toán</option>
+                        </select>
+                      </td>
+                      <td>
+                        <input type="date" value={r.paid_date || ''}
+                          onChange={(e) => setPaidDate(r, e.target.value)} />
                       </td>
                       <td><button className="icon-btn del" onClick={() => delReconcile(r)}>✕</button></td>
                     </tr>
